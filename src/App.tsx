@@ -56,6 +56,8 @@ export default function ThoughtStream() {
   const [categories, setCategories] = useState<string[]>(DEFAULT_CATEGORIES);
   const [recording, setRecording] = useState(false);
   const [transcript, setTranscript] = useState("");
+  const [inputMode, setInputMode] = useState<"voice" | "text">("voice");
+  const [manualText, setManualText] = useState("");
   const [selectedCat, setSelectedCat] = useState("");
   const [customCat, setCustomCat] = useState("");
   const [aiCatSuggestion, setAiCatSuggestion] = useState<string | null>(null);
@@ -68,10 +70,10 @@ export default function ThoughtStream() {
   const [justSaved, setJustSaved] = useState(false);
   const [loading, setLoading] = useState(true);
   const [dbError, setDbError] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
 
   const recognitionRef = useRef<any>(null);
 
-  // Load notes from Supabase
   useEffect(() => {
     loadNotes();
   }, []);
@@ -88,7 +90,6 @@ export default function ThoughtStream() {
         setDbError("Could not connect to database: " + error.message);
       } else {
         setNotes(data || []);
-        // Derive categories from existing notes + defaults
         const noteCats = (data || []).map((n: any) => n.category).filter(Boolean);
         const allCats = [...new Set([...DEFAULT_CATEGORIES, ...noteCats])] as string[];
         setCategories(allCats);
@@ -142,8 +143,10 @@ export default function ThoughtStream() {
     setAiCatSuggestion(result.trim().replace(/[^a-zA-Z0-9 ]/g, ""));
   };
 
+  const activeText = inputMode === "voice" ? transcript : manualText;
+
   const saveNote = async () => {
-    const text = transcript.trim();
+    const text = activeText.trim();
     if (!text) return;
     setSavingNote(true);
 
@@ -162,12 +165,12 @@ export default function ThoughtStream() {
     if (error) {
       setDbError("Failed to save note: " + error.message);
     } else {
-      const updated = [data, ...notes];
-      setNotes(updated);
+      setNotes(prev => [data, ...prev]);
       if (!categories.includes(cat)) {
         setCategories(prev => [...prev, cat]);
       }
       setTranscript("");
+      setManualText("");
       setSelectedCat("");
       setCustomCat("");
       setAiCatSuggestion(null);
@@ -201,7 +204,12 @@ export default function ThoughtStream() {
   };
 
   const usedCategories = [...new Set(notes.map(n => n.category))];
-  const filteredNotes = filterCat ? notes.filter(n => n.category === filterCat) : notes;
+
+  const filteredNotes = notes.filter(n => {
+    const matchesCat = !filterCat || n.category === filterCat;
+    const matchesSearch = !searchQuery || n.text.toLowerCase().includes(searchQuery.toLowerCase()) || n.category.toLowerCase().includes(searchQuery.toLowerCase());
+    return matchesCat && matchesSearch;
+  });
 
   const s: Record<string, any> = {
     app: { fontFamily: "'Inter', system-ui, sans-serif", background: BG, minHeight: "100vh", color: TEXT, display: "flex", flexDirection: "column", maxWidth: 640, margin: "0 auto", padding: "0 0 80px" },
@@ -224,12 +232,14 @@ export default function ThoughtStream() {
     catChips: { display: "flex", flexWrap: "wrap" as const, gap: 8 },
     chip: (active: boolean) => ({ padding: "6px 14px", borderRadius: 20, fontSize: 13, fontWeight: 500, cursor: "pointer", border: `1px solid ${active ? ACCENT : BORDER}`, background: active ? ACCENT_SOFT : "transparent", color: active ? ACCENT : TEXT_MUTED, transition: "all 0.15s" }),
     input: { width: "100%", background: SURFACE2, border: `1px solid ${BORDER}`, borderRadius: 10, padding: "10px 14px", fontSize: 14, color: TEXT, outline: "none", boxSizing: "border-box" as const },
+    textarea: { width: "100%", background: SURFACE2, border: `1px solid ${BORDER}`, borderRadius: 10, padding: "10px 14px", fontSize: 14, color: TEXT, outline: "none", boxSizing: "border-box" as const, minHeight: 100, resize: "vertical" as const, fontFamily: "inherit", lineHeight: 1.6 },
     btn: (variant = "primary") => ({
       padding: "10px 20px", borderRadius: 10, border: "none", cursor: "pointer", fontWeight: 600, fontSize: 14,
       background: variant === "primary" ? ACCENT : SURFACE2,
       color: variant === "primary" ? "#fff" : TEXT_MUTED,
       transition: "opacity 0.15s"
     }),
+    modeBtn: (active: boolean) => ({ flex: 1, padding: "8px 0", fontSize: 13, fontWeight: 500, background: active ? ACCENT : "transparent", color: active ? "#fff" : TEXT_MUTED, border: `1px solid ${active ? ACCENT : BORDER}`, cursor: "pointer", transition: "all 0.15s" }),
     noteCard: { background: SURFACE, borderRadius: 12, padding: 16, marginBottom: 10, border: `1px solid ${BORDER}` },
     catBadge: (cat: string) => {
       const colors: Record<string, string> = { Work: "#60A5FA", Ideas: "#34D399", Personal: "#F9A8D4", Health: "#A3E635", Random: "#FCD34D" };
@@ -238,6 +248,7 @@ export default function ThoughtStream() {
     },
     synthCard: { background: SURFACE, borderRadius: 14, padding: 20, marginBottom: 12, border: `1px solid ${BORDER}` },
     synthOutput: { background: SURFACE2, borderRadius: 10, padding: 14, fontSize: 14, lineHeight: 1.7, color: TEXT, marginTop: 12, border: `1px solid ${BORDER}`, whiteSpace: "pre-wrap" as const },
+    searchBox: { width: "100%", background: SURFACE2, border: `1px solid ${BORDER}`, borderRadius: 10, padding: "10px 14px 10px 38px", fontSize: 14, color: TEXT, outline: "none", boxSizing: "border-box" as const },
   };
 
   return (
@@ -247,6 +258,8 @@ export default function ThoughtStream() {
         @keyframes fadein { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:none} }
         * { box-sizing: border-box; }
         ::-webkit-scrollbar { width: 4px; } ::-webkit-scrollbar-track { background: transparent; } ::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+        textarea::placeholder { color: ${TEXT_MUTED}; }
+        input::placeholder { color: ${TEXT_MUTED}; }
       `}</style>
 
       <div style={s.header}>
@@ -270,20 +283,46 @@ export default function ThoughtStream() {
         {/* RECORD TAB */}
         {tab === "record" && (
           <div style={{ animation: "fadein 0.2s ease" }}>
-            <div style={s.card}>
-              <div style={{ textAlign: "center", marginBottom: 8 }}>
-                <p style={{ color: TEXT_MUTED, fontSize: 13, margin: "0 0 16px" }}>
-                  {recording ? <><PulsingDot /> &nbsp;Listening...</> : "Tap to start recording"}
-                </p>
-                <button style={s.recordBtn(recording)} onClick={recording ? stopRecording : startRecording}>
-                  {recording ? "⏹" : "🎙"}
-                </button>
-              </div>
-              {recorderError && <p style={{ color: "#F87171", fontSize: 13, marginTop: 12, textAlign: "center" }}>{recorderError}</p>}
-              <div style={s.transcript}>{transcript || "Your words will appear here..."}</div>
+
+            {/* Mode toggle */}
+            <div style={{ display: "flex", gap: 0, marginBottom: 16, borderRadius: 10, overflow: "hidden", border: `1px solid ${BORDER}` }}>
+              <button style={{ ...s.modeBtn(inputMode === "voice"), borderRadius: "9px 0 0 9px", borderRight: "none" }} onClick={() => setInputMode("voice")}>🎙 Voice</button>
+              <button style={{ ...s.modeBtn(inputMode === "text"), borderRadius: "0 9px 9px 0", borderLeft: "none" }} onClick={() => setInputMode("text")}>⌨️ Type</button>
             </div>
 
-            {transcript && (
+            {/* Voice mode */}
+            {inputMode === "voice" && (
+              <div style={s.card}>
+                <div style={{ textAlign: "center", marginBottom: 8 }}>
+                  <p style={{ color: TEXT_MUTED, fontSize: 13, margin: "0 0 16px" }}>
+                    {recording ? <><PulsingDot /> &nbsp;Listening...</> : "Tap to start recording"}
+                  </p>
+                  <button style={s.recordBtn(recording)} onClick={recording ? stopRecording : startRecording}>
+                    {recording ? "⏹" : "🎙"}
+                  </button>
+                </div>
+                {recorderError && <p style={{ color: "#F87171", fontSize: 13, marginTop: 12, textAlign: "center" }}>{recorderError}</p>}
+                <div style={s.transcript}>{transcript || "Your words will appear here..."}</div>
+              </div>
+            )}
+
+            {/* Text mode */}
+            {inputMode === "text" && (
+              <div style={s.card}>
+                <span style={s.label}>Type your thought</span>
+                <textarea
+                  style={s.textarea}
+                  placeholder="What's on your mind..."
+                  value={manualText}
+                  onChange={e => setManualText(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) saveNote(); }}
+                />
+                <p style={{ fontSize: 11, color: TEXT_MUTED, margin: "6px 0 0" }}>Tip: Ctrl+Enter to save quickly</p>
+              </div>
+            )}
+
+            {/* Category + save — show when there's text */}
+            {activeText.trim() && (
               <div style={{ ...s.card, animation: "fadein 0.2s ease" }}>
                 <div style={{ marginBottom: 16 }}>
                   <span style={s.label}>Category</span>
@@ -307,7 +346,7 @@ export default function ThoughtStream() {
                 )}
 
                 <div style={{ display: "flex", gap: 10 }}>
-                  <button style={s.btn("secondary")} onClick={() => suggestCategory(transcript)}>✨ Suggest category</button>
+                  <button style={s.btn("secondary")} onClick={() => suggestCategory(activeText)}>✨ Suggest category</button>
                   <button style={{ ...s.btn("primary"), opacity: savingNote ? 0.6 : 1 }} onClick={saveNote} disabled={savingNote}>
                     {savingNote ? "Saving..." : justSaved ? "✓ Saved!" : "Save note"}
                   </button>
@@ -315,8 +354,8 @@ export default function ThoughtStream() {
               </div>
             )}
 
-            {justSaved && !transcript && (
-              <div style={{ textAlign: "center", color: "#34D399", fontSize: 14, padding: 12 }}>✓ Saved to your database! Tap the mic for another.</div>
+            {justSaved && !activeText.trim() && (
+              <div style={{ textAlign: "center", color: "#34D399", fontSize: 14, padding: 12 }}>✓ Saved to your database! Capture another.</div>
             )}
           </div>
         )}
@@ -324,6 +363,22 @@ export default function ThoughtStream() {
         {/* NOTES TAB */}
         {tab === "notes" && (
           <div style={{ animation: "fadein 0.2s ease" }}>
+
+            {/* Search bar */}
+            <div style={{ position: "relative", marginBottom: 16 }}>
+              <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", fontSize: 16, color: TEXT_MUTED, pointerEvents: "none" }}>🔍</span>
+              <input
+                style={s.searchBox}
+                placeholder="Search your notes..."
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+              />
+              {searchQuery && (
+                <button onClick={() => setSearchQuery("")} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: TEXT_MUTED, cursor: "pointer", fontSize: 16 }}>×</button>
+              )}
+            </div>
+
+            {/* Category filters */}
             <div style={{ marginBottom: 16 }}>
               <div style={s.catChips}>
                 <button style={s.chip(!filterCat)} onClick={() => setFilterCat(null)}>All ({notes.length})</button>
@@ -337,8 +392,12 @@ export default function ThoughtStream() {
 
             {!loading && filteredNotes.length === 0 && (
               <div style={{ textAlign: "center", color: TEXT_MUTED, padding: "40px 0", fontSize: 14 }}>
-                No notes yet. Hit the mic and capture something!
+                {searchQuery ? `No notes matching "${searchQuery}"` : "No notes yet. Hit the mic and capture something!"}
               </div>
+            )}
+
+            {searchQuery && filteredNotes.length > 0 && (
+              <p style={{ fontSize: 12, color: TEXT_MUTED, marginBottom: 12 }}>{filteredNotes.length} result{filteredNotes.length !== 1 ? "s" : ""} for "{searchQuery}"</p>
             )}
 
             {filteredNotes.map(note => (
@@ -347,7 +406,9 @@ export default function ThoughtStream() {
                   <span style={s.catBadge(note.category)}>{note.category}</span>
                   <button onClick={() => deleteNote(note.id)} style={{ background: "none", border: "none", color: TEXT_MUTED, cursor: "pointer", fontSize: 16, padding: 0, lineHeight: 1 }}>×</button>
                 </div>
-                <p style={{ margin: "4px 0 8px", fontSize: 14, lineHeight: 1.6 }}>{note.text}</p>
+                <p style={{ margin: "4px 0 8px", fontSize: 14, lineHeight: 1.6 }}>
+                  {searchQuery ? highlightMatch(note.text, searchQuery) : note.text}
+                </p>
                 <span style={{ fontSize: 11, color: TEXT_MUTED }}>{formatTime(note.ts)}</span>
               </div>
             ))}
@@ -406,5 +467,15 @@ export default function ThoughtStream() {
         )}
       </div>
     </div>
+  );
+}
+
+function highlightMatch(text: string, query: string) {
+  if (!query) return text;
+  const parts = text.split(new RegExp(`(${query})`, "gi"));
+  return parts.map((part, i) =>
+    part.toLowerCase() === query.toLowerCase()
+      ? <mark key={i} style={{ background: "#7C6EF744", color: "#A89EF8", borderRadius: 3, padding: "0 2px" }}>{part}</mark>
+      : part
   );
 }
